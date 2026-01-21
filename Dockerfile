@@ -14,3 +14,4 @@ EXPOSE 8000
 
 # Run the FastAPI app by default
 CMD ["python", "scripts/run_app.py"]
+
