@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - ENVIRONMENT=development
+      - DEBUG=true
+      - ORY_KRATOS_URL=http://kratos:4433
+      - ORY_HYDRA_URL=http://hydra:4444
+      - MCP_SERVER_HOST=0.0.0.0
+      - MCP_SERVER_PORT=8000
+    env_file:
+      - .env
+    volumes:
+      - ./src:/app/src
+      - ./scripts:/app/scripts  # Add this line
+    depends_on:
+      - kratos
+      - hydra
+
+  kratos:
+    image: oryd/kratos:latest
+    ports:
+      - "4433:4433"
+      - "4434:4434"
+    command: serve -c /etc/config/kratos/kratos.yml --dev
+    volumes:
+      - ./docker/kratos:/etc/config/kratos
+
+  hydra:
+    image: oryd/hydra:latest
+    ports:
+      - "4444:4444"
+      - "4445:4445"
+    command: serve all --dev
+    environment:
+      - DSN=memory
+      - URLS_SELF_ISSUER=http://localhost:4444
