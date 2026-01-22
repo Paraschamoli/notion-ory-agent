@@ -1,6 +1,7 @@
 import httpx
 from typing import Optional, Dict, Any
 from src.config import settings
+from src.models.user_notion import UserNotionConfig
 
 class KratosService:
     """Service for interacting with Ory Kratos."""
@@ -26,7 +27,7 @@ class KratosService:
                 }
     
     async def create_identity(self, email: str, traits: Optional[Dict] = None) -> Dict[str, Any]:
-        """Create a new identity in Kratos."""
+        """Create a new identity in Kratos with optional Notion config."""
         payload = {
             "schema_id": "default",
             "traits": traits or {
@@ -68,9 +69,11 @@ class KratosService:
                 response = await client.get(f"{self.admin_url}/admin/identities/{identity_id}")
                 
                 if response.status_code == 200:
+                    identity_data = response.json()
                     return {
                         "success": True,
-                        "identity": response.json()
+                        "identity": identity_data,
+                        "notion_config": self._extract_notion_config(identity_data)
                     }
                 else:
                     return {
@@ -84,22 +87,47 @@ class KratosService:
                     "error": f"Exception occurred: {str(e)}"
                 }
     
-    async def list_identities(self) -> Dict[str, Any]:
-        """List all identities."""
+    async def update_identity_notion_config(
+        self, 
+        identity_id: str, 
+        notion_config: UserNotionConfig
+    ) -> Dict[str, Any]:
+        """Update a user's Notion configuration."""
+        # First get current identity
+        identity_result = await self.get_identity(identity_id)
+        if not identity_result.get("success"):
+            return identity_result
+        
+        identity_data = identity_result["identity"]
+        traits = identity_data.get("traits", {})
+        
+        # Update traits with new Notion config
+        traits.update(notion_config.to_traits())
+        
+        # Update identity
+        payload = {
+            "traits": traits,
+            "schema_id": identity_data.get("schema_id", "default")
+        }
+        
         async with httpx.AsyncClient() as client:
             try:
-                response = await client.get(f"{self.admin_url}/admin/identities")
+                response = await client.put(
+                    f"{self.admin_url}/admin/identities/{identity_id}",
+                    json=payload,
+                    timeout=30.0
+                )
                 
                 if response.status_code == 200:
                     return {
                         "success": True,
-                        "identities": response.json(),
-                        "count": len(response.json())
+                        "identity": response.json(),
+                        "message": "Notion configuration updated successfully"
                     }
                 else:
                     return {
                         "success": False,
-                        "error": f"Failed to list identities: {response.text}",
+                        "error": f"Failed to update identity: {response.text}",
                         "status_code": response.status_code
                     }
             except Exception as e:
@@ -108,21 +136,40 @@ class KratosService:
                     "error": f"Exception occurred: {str(e)}"
                 }
     
-    async def get_login_flow(self, flow_id: str) -> Dict[str, Any]:
-        """Get a login flow by ID."""
+    def _extract_notion_config(self, identity_data: Dict[str, Any]) -> Optional[UserNotionConfig]:
+        """Extract Notion config from identity traits."""
+        traits = identity_data.get("traits", {})
+        if "notion_config" in traits:
+            try:
+                return UserNotionConfig.from_traits(traits)
+            except Exception:
+                return None
+        return None
+    
+    async def list_identities(self) -> Dict[str, Any]:
+        """List all identities."""
         async with httpx.AsyncClient() as client:
             try:
-                response = await client.get(f"{self.base_url}/self-service/login/flows?id={flow_id}")
+                response = await client.get(f"{self.admin_url}/admin/identities")
                 
                 if response.status_code == 200:
+                    identities = response.json()
+                    # Add notion config to each identity
+                    enriched_identities = []
+                    for identity in identities:
+                        notion_config = self._extract_notion_config(identity)
+                        identity["notion_config"] = notion_config.dict() if notion_config else None
+                        enriched_identities.append(identity)
+                    
                     return {
                         "success": True,
-                        "flow": response.json()
+                        "identities": enriched_identities,
+                        "count": len(identities)
                     }
                 else:
                     return {
                         "success": False,
-                        "error": f"Failed to get login flow: {response.text}",
+                        "error": f"Failed to list identities: {response.text}",
                         "status_code": response.status_code
                     }
             except Exception as e:

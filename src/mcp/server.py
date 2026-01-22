@@ -6,7 +6,9 @@ import mcp.server.stdio
 from src.config import settings
 from src.services.kratos_service import kratos_service
 from src.services.hydra_service import hydra_service
-from src.services.notion_service import notion_service
+# Removed: from src.services.notion_service import notion_service
+from src.services.user_notion_service import user_notion_service
+from src.models.user_notion import UserNotionConfig
 
 class MCPServer:
     """Main MCP server class."""
@@ -141,21 +143,31 @@ class MCPServer:
                     "required": ["client_name", "redirect_uris"]
                 },
             ),
-            # Notion tools
+            # Notion tools (updated for user-specific access)
             types.Tool(
                 name="check_notion_connection",
-                description="Check connection to Notion API",
+                description="Check Notion API connection for a specific user",
                 inputSchema={
                     "type": "object",
-                    "properties": {},
+                    "properties": {
+                        "user_id": {
+                            "type": "string",
+                            "description": "User ID from Kratos"
+                        }
+                    },
+                    "required": ["user_id"]
                 },
             ),
             types.Tool(
                 name="search_notion",
-                description="Search in Notion",
+                description="Search in a user's Notion workspace",
                 inputSchema={
                     "type": "object",
                     "properties": {
+                        "user_id": {
+                            "type": "string",
+                            "description": "User ID from Kratos"
+                        },
                         "query": {
                             "type": "string",
                             "description": "Search query"
@@ -166,15 +178,19 @@ class MCPServer:
                             "default": "page"
                         }
                     },
-                    "required": ["query"]
+                    "required": ["user_id", "query"]
                 },
             ),
             types.Tool(
                 name="create_notion_page",
-                description="Create a new page in Notion",
+                description="Create a new page in user's Notion",
                 inputSchema={
                     "type": "object",
                     "properties": {
+                        "user_id": {
+                            "type": "string",
+                            "description": "User ID from Kratos"
+                        },
                         "title": {
                             "type": "string",
                             "description": "Page title"
@@ -185,21 +201,25 @@ class MCPServer:
                         },
                         "database_id": {
                             "type": "string",
-                            "description": "Database ID (optional, uses default if not provided)"
+                            "description": "Database ID (optional, uses user's default if not provided)"
                         }
                     },
-                    "required": ["title"]
+                    "required": ["user_id", "title"]
                 },
             ),
             types.Tool(
                 name="query_notion_database",
-                description="Query a Notion database",
+                description="Query a Notion database for a specific user",
                 inputSchema={
                     "type": "object",
                     "properties": {
+                        "user_id": {
+                            "type": "string",
+                            "description": "User ID from Kratos"
+                        },
                         "database_id": {
                             "type": "string",
-                            "description": "Database ID (optional, uses default if not provided)"
+                            "description": "Database ID (optional, uses user's default if not provided)"
                         },
                         "page_size": {
                             "type": "number",
@@ -207,6 +227,56 @@ class MCPServer:
                             "default": 10
                         }
                     },
+                    "required": ["user_id"]
+                },
+            ),
+            # User-specific Notion tools
+            types.Tool(
+                name="configure_user_notion",
+                description="Configure Notion integration for a user",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "user_id": {
+                            "type": "string",
+                            "description": "User ID from Kratos"
+                        },
+                        "api_key": {
+                            "type": "string",
+                            "description": "User's Notion API key"
+                        },
+                        "database_id": {
+                            "type": "string",
+                            "description": "User's default Notion database ID (optional)"
+                        }
+                    },
+                    "required": ["user_id", "api_key"]
+                },
+            ),
+            types.Tool(
+                name="create_user_notion_page",
+                description="Create a page in user's Notion database",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "user_id": {
+                            "type": "string",
+                            "description": "User ID from Kratos"
+                        },
+                        "title": {
+                            "type": "string",
+                            "description": "Page title"
+                        },
+                        "content": {
+                            "type": "string",
+                            "description": "Page content (optional)"
+                        },
+                        "database_id": {
+                            "type": "string",
+                            "description": "Database ID (optional, uses user's default)"
+                        }
+                    },
+                    "required": ["user_id", "title"]
                 },
             ),
         ]
@@ -358,37 +428,101 @@ class MCPServer:
                         text=f"❌ Failed to create OAuth client: {result.get('error', 'Unknown error')}"
                     )
                 ]
-        # Notion tools
+        # Notion tools - UPDATED FOR USER-SPECIFIC ACCESS
         elif name == "check_notion_connection":
-            connection_status = await notion_service.check_connection()
-            status = connection_status.get("status", "unknown")
+            if not arguments:
+                raise ValueError("Arguments required for check_notion_connection")
             
-            if status == "connected":
-                user = connection_status.get("user", {})
+            user_id = arguments.get("user_id")
+            if not user_id:
                 return [
                     types.TextContent(
                         type="text",
-                        text=f"✅ Connected to Notion API\n"
-                             f"User: {user.get('name', 'Unknown')}\n"
-                             f"Email: {user.get('email', 'N/A')}"
+                        text="❌ User ID is required. Use 'configure_user_notion' first to set up a user's Notion connection."
+                    )
+                ]
+            
+            # Get user config from Kratos
+            user_result = await kratos_service.get_identity(user_id)
+            if not user_result.get("success"):
+                return [
+                    types.TextContent(
+                        type="text",
+                        text=f"❌ User {user_id} not found in Kratos"
+                    )
+                ]
+            
+            notion_config = user_result.get("notion_config")
+            if not notion_config:
+                return [
+                    types.TextContent(
+                        type="text",
+                        text=f"❌ User {user_id} has no Notion configuration. Use 'configure_user_notion' first."
+                    )
+                ]
+            
+            # Test the connection
+            test_result = await user_notion_service.test_user_connection(notion_config)
+            
+            if test_result.status == "connected":
+                return [
+                    types.TextContent(
+                        type="text",
+                        text=f"✅ User {user_id} is connected to Notion!\n"
+                             f"User: {test_result.user_name}\n"
+                             f"Workspace: {test_result.workspace_name}\n"
+                             f"Last tested: {test_result.tested_at}"
                     )
                 ]
             else:
-                error = connection_status.get("error", "Unknown error")
                 return [
                     types.TextContent(
                         type="text",
-                        text=f"❌ Notion connection failed: {error}"
+                        text=f"❌ User {user_id} Notion connection failed: {test_result.error}"
                     )
                 ]
+        
         elif name == "search_notion":
             if not arguments:
                 raise ValueError("Arguments required for search_notion")
             
+            user_id = arguments.get("user_id")
             query = arguments.get("query", "")
             filter_type = arguments.get("filter_type", "page")
             
-            result = await notion_service.search(query=query, filter_type=filter_type)
+            if not user_id:
+                return [
+                    types.TextContent(
+                        type="text",
+                        text="❌ User ID is required. Use 'configure_user_notion' first to set up a user's Notion connection."
+                    )
+                ]
+            
+            # Get user config from Kratos
+            user_result = await kratos_service.get_identity(user_id)
+            if not user_result.get("success"):
+                return [
+                    types.TextContent(
+                        type="text",
+                        text=f"❌ User {user_id} not found in Kratos"
+                    )
+                ]
+            
+            notion_config = user_result.get("notion_config")
+            if not notion_config:
+                return [
+                    types.TextContent(
+                        type="text",
+                        text=f"❌ User {user_id} has no Notion configuration. Use 'configure_user_notion' first."
+                    )
+                ]
+            
+            # Use user_notion_service with the user's config
+            result = await user_notion_service.search(
+                notion_config=notion_config,
+                query=query,
+                filter_type=filter_type
+            )
             
             if result.get("success"):
                 count = result.get("count", 0)
@@ -435,15 +569,49 @@ class MCPServer:
                         text=f"❌ Search failed: {result.get('error', 'Unknown error')}"
                     )
                 ]
+        
         elif name == "create_notion_page":
             if not arguments:
                 raise ValueError("Arguments required for create_notion_page")
             
+            user_id = arguments.get("user_id")
             title = arguments.get("title", "New Page")
             content = arguments.get("content")
             database_id = arguments.get("database_id")
             
-            result = await notion_service.create_page(
+            if not user_id:
+                return [
+                    types.TextContent(
+                        type="text",
+                        text="❌ User ID is required. Use 'configure_user_notion' first to set up a user's Notion connection."
+                    )
+                ]
+            
+            # Get user config from Kratos
+            user_result = await kratos_service.get_identity(user_id)
+            if not user_result.get("success"):
+                return [
+                    types.TextContent(
+                        type="text",
+                        text=f"❌ User {user_id} not found in Kratos"
+                    )
+                ]
+            
+            notion_config = user_result.get("notion_config")
+            if not notion_config:
+                return [
+                    types.TextContent(
+                        type="text",
+                        text=f"❌ User {user_id} has no Notion configuration. Use 'configure_user_notion' first."
+                    )
+                ]
+            
+            # Use user's database_id if not provided
+            if not database_id and notion_config.notion_database_id:
+                database_id = notion_config.notion_database_id
+            
+            result = await user_notion_service.create_page(
+                notion_config=notion_config,
                 database_id=database_id,
                 properties={
                     "Name": {
@@ -465,7 +633,7 @@ class MCPServer:
                 return [
                     types.TextContent(
                         type="text",
-                        text=f"✅ Page created successfully!\n"
+                        text=f"✅ Page created successfully for user {user_id}!\n"
                              f"Title: {title}\n"
                              f"ID: {page_id}\n"
                              f"URL: {url}"
@@ -478,11 +646,45 @@ class MCPServer:
                         text=f"❌ Failed to create page: {result.get('error', 'Unknown error')}"
                     )
                 ]
+        
         elif name == "query_notion_database":
+            user_id = arguments.get("user_id") if arguments else None
             database_id = arguments.get("database_id") if arguments else None
             page_size = arguments.get("page_size", 10) if arguments else 10
             
-            result = await notion_service.query_database(
+            if not user_id:
+                return [
+                    types.TextContent(
+                        type="text",
+                        text="❌ User ID is required. Use 'configure_user_notion' first to set up a user's Notion connection."
+                    )
+                ]
+            
+            # Get user config from Kratos
+            user_result = await kratos_service.get_identity(user_id)
+            if not user_result.get("success"):
+                return [
+                    types.TextContent(
+                        type="text",
+                        text=f"❌ User {user_id} not found in Kratos"
+                    )
+                ]
+            
+            notion_config = user_result.get("notion_config")
+            if not notion_config:
+                return [
+                    types.TextContent(
+                        type="text",
+                        text=f"❌ User {user_id} has no Notion configuration. Use 'configure_user_notion' first."
+                    )
+                ]
+            
+            # Use user's database_id if not provided
+            if not database_id and notion_config.notion_database_id:
+                database_id = notion_config.notion_database_id
+            
+            result = await user_notion_service.query_database(
+                notion_config=notion_config,
                 database_id=database_id,
                 page_size=page_size
             )
@@ -529,6 +731,40 @@ class MCPServer:
                         text=f"❌ Failed to query database: {result.get('error', 'Unknown error')}"
                     )
                 ]
+        
+        # User-specific Notion tools
+        elif name == "configure_user_notion":
+            if not arguments:
+                raise ValueError("Arguments required for configure_user_notion")
+            
+            user_id = arguments.get("user_id")
+            api_key = arguments.get("api_key")
+            database_id = arguments.get("database_id")
+            
+            # Create config and test connection
+            notion_config = UserNotionConfig(
+                notion_api_key=api_key,
+                notion_database_id=database_id
+            )
+            
+            test_result = await user_notion_service.test_user_connection(notion_config)
+            
+            if test_result.status == "connected":
+                return [
+                    types.TextContent(
+                        type="text",
+                        text=f"✅ Notion configured for user {user_id}!\n"
+                             f"Connected as: {test_result.user_name}\n"
+                             f"Workspace: {test_result.workspace_name}"
+                    )
+                ]
+            else:
+                return [
+                    types.TextContent(
+                        type="text",
+                        text=f"❌ Failed to configure Notion: {test_result.error}"
+                    )
+                ]
         else:
             raise ValueError(f"Unknown tool: {name}")
     
@@ -561,11 +797,11 @@ class MCPServer:
                 description="Ory Hydra health status",
                 mimeType="text/plain",
             ),
-            # Notion resources
+            # Notion resources - Updated description
             types.Resource(
                 uri="notion://connection",
-                name="Notion Connection",
-                description="Notion API connection status",
+                name="Notion Connection Help",
+                description="Information about user-specific Notion connections",
                 mimeType="text/plain",
             ),
         ]
@@ -583,13 +819,10 @@ class MCPServer:
             health_status = await hydra_service.get_health()
             return f"Hydra Status: {health_status.get('status', 'unknown')}"
         elif uri == "notion://connection":
-            connection_status = await notion_service.check_connection()
-            status = connection_status.get("status", "unknown")
-            if status == "connected":
-                user = connection_status.get("user", {})
-                return f"Notion Status: Connected\nUser: {user.get('name', 'Unknown')}"
-            else:
-                return f"Notion Status: {status}\nError: {connection_status.get('error', 'Unknown')}"
+            return ("Notion integration is now user-specific.\n"
+                    "Users must configure their own Notion API keys.\n"
+                    "Use 'configure_user_notion' tool to set up a user's Notion connection.\n"
+                    "Then use other Notion tools with the 'user_id' parameter.")
         else:
             raise ValueError(f"Unknown resource: {uri}")
     
@@ -613,10 +846,10 @@ class MCPServer:
                 description="Get help with OAuth 2.0 using Ory Hydra",
                 arguments=[],
             ),
-            # Notion prompt
+            # Notion prompt - Updated description
             types.Prompt(
                 name="notion_help",
-                description="Get help with Notion integration",
+                description="Get help with user-specific Notion integration",
                 arguments=[],
             ),
         ]
@@ -679,12 +912,12 @@ class MCPServer:
                         role="user",
                         content=types.TextContent(
                             type="text",
-                            text="I can help you with Notion integration. You can:\n"
-                                 "1. Search in Notion\n"
-                                 "2. Create new pages\n"
-                                 "3. Query databases\n"
-                                 "4. Check connection status\n"
-                                 f"Notion API: Configured with {'valid API key' if settings.notion_api_key else 'no API key'}"
+                            text="I can help you with user-specific Notion integration. You can:\n"
+                                 "1. Configure Notion for a user (requires user's API key)\n"
+                                 "2. Search in a user's Notion workspace\n"
+                                 "3. Create pages in a user's Notion\n"
+                                 "4. Query a user's Notion databases\n"
+                                 "All Notion operations now require a user_id parameter."
                         )
                     )
                 ]

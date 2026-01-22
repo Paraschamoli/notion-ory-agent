@@ -30,14 +30,14 @@ class HydraService:
         client_name: str,
         redirect_uris: List[str],
         grant_types: Optional[List[str]] = None,
-        scope: Optional[str] = "openid offline"
+        scope: Optional[str] = "openid offline profile notion_api"
     ) -> Dict[str, Any]:
-        """Create a new OAuth 2.0 client."""
+        """Create a new OAuth 2.0 client with Notion API scope."""
         payload = {
             "client_name": client_name,
             "redirect_uris": redirect_uris,
             "grant_types": grant_types or ["authorization_code", "refresh_token"],
-            "scope": scope,
+            "scope": scope,  # Added notion_api scope
             "token_endpoint_auth_method": "client_secret_basic"
         }
         
@@ -70,114 +70,19 @@ class HydraService:
                     "error": f"Exception occurred: {str(e)}"
                 }
     
-    async def list_oauth_clients(self) -> Dict[str, Any]:
-        """List all OAuth clients."""
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.get(f"{self.admin_url}/admin/clients")
-                
-                if response.status_code == 200:
-                    clients = response.json()
-                    return {
-                        "success": True,
-                        "clients": clients,
-                        "count": len(clients)
-                    }
-                else:
-                    return {
-                        "success": False,
-                        "error": f"Failed to list clients: {response.text}",
-                        "status_code": response.status_code
-                    }
-            except Exception as e:
-                return {
-                    "success": False,
-                    "error": f"Exception occurred: {str(e)}"
-                }
-    
-    async def get_oauth_client(self, client_id: str) -> Dict[str, Any]:
-        """Get an OAuth client by ID."""
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.get(f"{self.admin_url}/admin/clients/{client_id}")
-                
-                if response.status_code == 200:
-                    return {
-                        "success": True,
-                        "client": response.json()
-                    }
-                else:
-                    return {
-                        "success": False,
-                        "error": f"Failed to get client: {response.text}",
-                        "status_code": response.status_code
-                    }
-            except Exception as e:
-                return {
-                    "success": False,
-                    "error": f"Exception occurred: {str(e)}"
-                }
-    
-    async def delete_oauth_client(self, client_id: str) -> Dict[str, Any]:
-        """Delete an OAuth client."""
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.delete(f"{self.admin_url}/admin/clients/{client_id}")
-                
-                if response.status_code == 204:
-                    return {
-                        "success": True,
-                        "message": f"Client {client_id} deleted successfully"
-                    }
-                else:
-                    return {
-                        "success": False,
-                        "error": f"Failed to delete client: {response.text}",
-                        "status_code": response.status_code
-                    }
-            except Exception as e:
-                return {
-                    "success": False,
-                    "error": f"Exception occurred: {str(e)}"
-                }
-    
-    async def get_oauth_consent_request(self, consent_challenge: str) -> Dict[str, Any]:
-        """Get OAuth consent request information."""
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.get(
-                    f"{self.admin_url}/admin/oauth2/auth/requests/consent?consent_challenge={consent_challenge}"
-                )
-                
-                if response.status_code == 200:
-                    return {
-                        "success": True,
-                        "consent_request": response.json()
-                    }
-                else:
-                    return {
-                        "success": False,
-                        "error": f"Failed to get consent request: {response.text}",
-                        "status_code": response.status_code
-                    }
-            except Exception as e:
-                return {
-                    "success": False,
-                    "error": f"Exception occurred: {str(e)}"
-                }
-    
     async def accept_oauth_consent_request(
         self,
         consent_challenge: str,
         grant_scope: List[str],
+        session_data: Optional[Dict[str, Any]] = None,
         remember: bool = True
     ) -> Dict[str, Any]:
-        """Accept an OAuth consent request."""
+        """Accept an OAuth consent request with session data."""
         payload = {
             "grant_scope": grant_scope,
             "remember": remember,
             "remember_for": 3600,
-            "session": {
+            "session": session_data or {
                 "access_token": {},
                 "id_token": {}
             }

@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     ory_hydra_url: str = Field(default="http://localhost:4444")
     ory_hydra_admin_url: Optional[str] = None
     
-    # Notion
+    # Notion - App-level defaults (for admin/fallback)
     notion_api_key: Optional[str] = None
     notion_database_id: Optional[str] = None
     

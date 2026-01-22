@@ -1,7 +1,7 @@
 {
   "$id": "default",
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "User",
+  "title": "Person",
   "type": "object",
   "properties": {
     "traits": {
@@ -9,10 +9,58 @@
       "properties": {
         "email": {
           "type": "string",
-          "format": "email"
-        }
+          "format": "email",
+          "title": "E-Mail",
+          "minLength": 3,
+          "ory.sh/kratos": {
+            "credentials": {
+              "password": {
+                "identifier": true
+              }
+            },
+            "verification": {
+              "via": "email"
+            },
+            "recovery": {
+              "via": "email"
+            }
+          }
+        },
+        "name": {
+          "type": "object",
+          "properties": {
+            "first": {
+              "title": "First Name",
+              "type": "string"
+            },
+            "last": {
+              "title": "Last Name",
+              "type": "string"
+            }
+          }
+        },
+       "notion_config": {
+  "type": "object",
+  "properties": {
+    "api_key": {
+      "type": "string"
+    },
+    "database_id": {
+      "type": ["string", "null"]
+    },
+    "enabled": {
+      "type": "boolean"
+    },
+    "connected_at": {
+      "type": ["string", "null"]
+     
+    }
+  },
+  "required": ["api_key"]
+}
       },
-      "required": ["email"]
+      "required": ["email"],
+      "additionalProperties": true
     }
   }
 }
